@@ -33,6 +33,7 @@ STREAM_HEADER_SIZE_BYTES = 8
 STREAM_STDOUT = 1
 STREAM_STDERR = 2
 
+
 class APIError(requests.exceptions.HTTPError):
     def __init__(self, message, response, explanation=None):
         super(APIError, self).__init__(message, response=response)
@@ -483,7 +484,8 @@ class Client(requests.Session):
         res = ''
         walker = 0
         while walker < len(response):
-            (block_type, length) = struct.unpack_from('>BxxxL', response[walker:])
+            (block_type, length) = struct.unpack_from('>BxxxL',
+                                                      response[walker:])
             walker += STREAM_HEADER_SIZE_BYTES
             if (stdout and block_type == STREAM_STDOUT) or \
                     (stderr and block_type == STREAM_STDERR):
