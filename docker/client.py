@@ -29,7 +29,9 @@ if not six.PY3:
     import websocket
 
 DEFAULT_TIMEOUT_SECONDS = 60
-
+STREAM_HEADER_SIZE_BYTES = 8
+STREAM_STDOUT = 1
+STREAM_STDERR = 2
 
 class APIError(requests.exceptions.HTTPError):
     def __init__(self, message, response, explanation=None):
@@ -115,11 +117,14 @@ class Client(requests.Session):
         self._raise_for_status(response)
         return response.raw._fp.fp._sock
 
-    def _result(self, response, json=False):
+    def _result(self, response, json=False, binary=False):
+        assert not (json and binary)
         self._raise_for_status(response)
 
         if json:
             return response.json()
+        if binary:
+            return response.content
         return response.text
 
     def _container_config(self, image, command, hostname=None, user=None,
@@ -460,27 +465,29 @@ class Client(requests.Session):
             self._cfg['Configs'][registry] = req_data
         return res
 
-    def logs(self, container):
+    def logs(self, container, stdout=True, stderr=True):
         if isinstance(container, dict):
             container = container.get('Id')
         params = {
             'logs': 1,
-            'stdout': 1,
-            'stderr': 1
+            'stdout': stdout and 1 or 0,
+            'stderr': stderr and 1 or 0,
         }
         u = self._url("/containers/{0}/attach".format(container))
+        response = self._result(self._post(u, params=params), binary=True)
+
+        # Stream multi-plexing was introduced in API v1.6.
         if utils.compare_version('1.6', self._version) < 0:
-            return self._result(self._post(u, params=params))
+            return response
+
         res = ''
-        response = self._result(self._post(u, params=params))
         walker = 0
         while walker < len(response):
-            header = response[walker:walker+8]
-            walker += 8
-            # we don't care about the type of stream since we want both
-            # stdout and stderr
-            length = struct.unpack(">L", header[4:].encode())[0]
-            res += response[walker:walker+length]
+            (block_type, length) = struct.unpack_from('>BxxxL', response[walker:])
+            walker += STREAM_HEADER_SIZE_BYTES
+            if (stdout and block_type == STREAM_STDOUT) or \
+                    (stderr and block_type == STREAM_STDERR):
+                res += response[walker:walker+length]
             walker += length
         return res
 
